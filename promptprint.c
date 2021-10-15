@@ -6,6 +6,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
+
+#define GRAY "\033[00;37m"
+#define RED "\033[01;31m"
+#define GREEN "\033[01;32m"
+#define WHITE "\033[01;37m"
+#define CADET "\033[00;36m"
+#define RESET_COLOR "\033[00m"
 
 void print_elided(char *path)
 {
@@ -56,10 +64,8 @@ void print_elided(char *path)
     }
 }
 
-int main(int argc, char *argv[])
+static void print_path()
 {
-    (void)argc; (void)argv;
-
     char *cwd = get_current_dir_name();
     const int cwd_len = strlen(cwd);
     char *home = getenv("HOME");
@@ -76,6 +82,32 @@ int main(int argc, char *argv[])
     print_elided(cwd);
     printf("/");
     free(cwd);
+}
+
+int main(int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+
+    char buf[200];
+
+    {
+        time_t now;
+        struct tm result;
+        time(&now);
+
+        strftime(buf, sizeof buf, "%T", localtime_r(&now, &result));
+
+        printf("%s[%s] ", GRAY, buf);
+    }
+    if (gethostname(buf, sizeof buf) == 0) {
+        buf[(sizeof buf) - 1] = '\0';
+        printf("%s", buf);
+    }
+    printf("%s: " WHITE, geteuid() == 0 ? RED : GREEN);
+
+    print_path();
+
+    printf(RESET_COLOR);
 
     return 0;
 }
