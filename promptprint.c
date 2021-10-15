@@ -21,12 +21,13 @@
 #include <stdio.h>
 #include <time.h>
 
-#define GRAY "\033[00;37m"
-#define RED "\033[01;31m"
-#define GREEN "\033[01;32m"
-#define WHITE "\033[01;37m"
-#define CADET "\033[00;36m"
-#define RESET_COLOR "\033[00m"
+#define GRAY    "\\[\033[00;37m\\]"
+#define RED     "\\[\033[01;31m\\]"
+#define GREEN   "\\[\033[01;32m\\]"
+#define WHITE   "\\[\033[01;37m\\]"
+#define CADET   "\\[\033[1;36m\\]"
+#define RESET   "\\[\033[0m\\]"
+
 
 #ifdef LIBGIT2_SUCKS
 static struct timespec t;
@@ -202,7 +203,7 @@ void print_git()
     print_git_status(repo);
     print_timer("status");
     git_repository_free(repo);
-    printf(") ");
+    printf(")");
 }
 
 int main(int argc, char *argv[])
@@ -238,7 +239,7 @@ int main(int argc, char *argv[])
     print_git();
     print_timer("git total");
 
-    printf(RESET_COLOR);
+    printf(RESET " ");
 
     return 0;
 }
