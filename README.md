@@ -1,6 +1,8 @@
 promptprint
 -----------
 
+![screenshot](/screenshot.png)
+
 My bash prompt was getting complex, so I decided to turn it into a tiny c program.
 
 It displays an elided current path, timestamp, git status (branch, detachment, dirtiness,
