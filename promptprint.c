@@ -213,7 +213,13 @@ int main(int argc, char *argv[])
     start = t.tv_sec * 1000. + t.tv_nsec * 0.000001;
 #endif
 
-    (void)argc; (void)argv;
+    if (argc > 1) {
+        // Assume argument is return code from previous command
+        int ret = atoi(argv[1]);
+        if (ret != 0) {
+            printf("returned " RED "%d" RESET "\n", ret);
+        }
+    }
 
     char buf[200];
 
