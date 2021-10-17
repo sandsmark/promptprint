@@ -7,7 +7,6 @@ promptprint
 Dependencies
 -------------
 
- - libgit2
  - C compiler
 
 

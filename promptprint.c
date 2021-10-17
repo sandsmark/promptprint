@@ -1,35 +1,26 @@
 #define _GNU_SOURCE
 
-// All my precious optimizations are wasted because of libgit2.  The rest of
-// the code runs in less than 0.5ms, and then just git_libgit2_init takes
-// dozens of milliseconds...
-//#define LIBGIT2_SUCKS
+//#define DEBUG_GIT
 
 #define MAX_LENGTH 10
-
-#include <git2/status.h>
-#include <git2/global.h>
-#include <git2/repository.h>
-#include <git2/buffer.h>
-#include <git2/errors.h>
-#include <git2/graph.h>
-#include <git2/branch.h>
 
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <sys/wait.h>
+#include <fcntl.h>
 
 #define GRAY    "\\[\033[00;37m\\]"
 #define RED     "\\[\033[01;31m\\]"
 #define GREEN   "\\[\033[01;32m\\]"
 #define WHITE   "\\[\033[01;37m\\]"
-#define CADET   "\\[\033[1;36m\\]"
+#define CADET   "\\[\033[00;36m\\]"
 #define RESET   "\\[\033[0m\\]"
 
 
-#ifdef LIBGIT2_SUCKS
+#ifdef DEBUG_GIT
 static struct timespec t;
 static double start;
 
@@ -113,105 +104,103 @@ static void print_path()
     free(cwd);
 }
 
-void print_git_status(git_repository *repo)
-{
-    git_status_options statusopt;
-    git_status_options_init(&statusopt, GIT_STATUS_OPTIONS_VERSION);
-    statusopt.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
-    statusopt.flags = GIT_STATUS_OPT_EXCLUDE_SUBMODULES | GIT_STATUS_OPT_NO_REFRESH;
+#ifdef DEBUG_GIT
+#define GIT_ERR(x) perror(x)
+#else
+#define GIT_ERR(x)
+#endif
 
-    git_status_list *status = NULL;
-    int ret = git_status_list_new(&status, repo, &statusopt);
-    if (ret == 0 && git_status_list_entrycount(status)) {
+FILE *launch_git_status(int *pid)
+{
+    int fds[2];
+    int ret = pipe(fds);
+    if (ret == -1) {
+        GIT_ERR("Failed to open pipe");
+        return NULL;
+    }
+    int inRead = fds[0];
+    int inWrite = fds[1];
+
+    ret = fork();
+    if (ret == -1) {
+        GIT_ERR("failed to fork");
+        return NULL;
+    }
+    if (ret == 0) { // Child
+        close(inRead);
+        dup2(inWrite, STDOUT_FILENO);
+        close(inWrite);
+        freopen("/dev/null", "w", stderr);
+        execlp("git", "git",
+                "status", "--ignore-submodules=all", "--branch", "--ahead-behind", "--porcelain", "--untracked-files=no",
+                NULL);
+        exit(0); // should never get here
+    }
+    *pid = ret;
+
+    int flags = fcntl(inRead, F_GETFL, 0);
+    flags |= O_NONBLOCK;
+    fcntl(inRead, F_SETFL, flags);
+
+    return fdopen(inRead, "r");
+}
+
+int print_git_branch(char *buff)
+{
+    if (strlen(buff) < strlen("## *...*/*")) {
+        return 0;
+    }
+
+    char *branch_end = strstr(buff, "...");
+    if (branch_end == NULL) {
+        return 0;
+    }
+    *branch_end = '\0';
+    char *branch = buff + 3;
+    printf("%s", branch);
+
+    char *ahead_behind = strchr(branch_end + 1, '[');
+    if (ahead_behind && strchr(ahead_behind, ']')) {
+        printf(" %s", ahead_behind);
+    }
+
+    return 1;
+}
+
+void print_git_status(FILE *git_output)
+{
+    char buff[4096];
+    if (fgets(buff, sizeof(buff), git_output) == NULL) {
+        return;
+    }
+    size_t line_len = strlen(buff);
+    if (!line_len) {
+        return;
+    }
+    buff[line_len - 1] = '\0';
+    printf(" " CADET "(");
+    if (strcmp(buff, "## HEAD (no branch)") == 0) {
+        printf("detached");
+    } else if (strstr(buff, "## ") != buff || !print_git_branch(buff)) {
+        printf("%s", buff);
+    }
+
+    // If there's more than one line, there's dirty files
+    if (fgets(buff, sizeof(buff), git_output) != NULL) {
         printf(" dirty");
     }
-    git_status_list_free(status);
-}
-
-void print_git_ahead_behind(git_repository *repo, git_reference *head)
-{
-    git_reference *upstream_branch = NULL;
-    int ret = git_branch_upstream(&upstream_branch, head);
-    if (ret != 0 || !upstream_branch) {
-        return;
-    }
-
-    const git_oid *local = git_reference_target(head);
-    const git_oid *upstream = git_reference_target(upstream_branch);
-
-    if (!local || !upstream) {
-        return;
-    }
-
-    size_t ahead = 0, behind = 0;
-    ret = git_graph_ahead_behind(&ahead, &behind, repo, local, upstream);
-    if (ret != 0) {
-        return;
-    }
-    git_reference_free(upstream_branch);
-    if (!ahead && !behind) {
-        return;
-    }
-    printf(" [");
-    if (ahead) {
-        printf("%d ahead", (int)ahead);
-
-        if (behind) {
-            printf(", ");
-        }
-    }
-    if (behind) {
-        printf("%d behind", (int)behind);
-    }
-    printf("]");
-}
-
-void print_git_branch(git_repository *repo)
-{
-    if (git_repository_head_detached(repo)) {
-        printf("detached");
-        return;
-    }
-
-    git_reference *head = NULL;
-    int ret = git_repository_head(&head, repo);
-    if (ret != 0) {
-        return;
-    }
-    const char *name = git_reference_shorthand(head);
-    printf("%s", name);
-    print_git_ahead_behind(repo, head);
-    git_reference_free(head);
-}
-
-void print_git()
-{
-    print_timer("pre git init");
-    git_libgit2_init();
-    print_timer("git init");
-
-    char *cwd = get_current_dir_name();
-    git_repository *repo = NULL;
-    int ret = git_repository_open_ext(&repo, cwd, 0, cwd);
-    free(cwd);
-    if (ret != 0) {
-        return;
-    }
-    printf(CADET " (");
-    print_git_branch(repo);
-    print_timer("branch");
-    print_git_status(repo);
-    print_timer("status");
-    git_repository_free(repo);
     printf(")");
 }
 
 int main(int argc, char *argv[])
 {
-#ifdef LIBGIT2_SUCKS
+#ifdef DEBUG_GIT
     clock_gettime(CLOCK_MONOTONIC, &t);
     start = t.tv_sec * 1000. + t.tv_nsec * 0.000001;
 #endif
+
+    int git_pid = -1;
+    FILE *git_output = launch_git_status(&git_pid);
 
     if (argc > 1) {
         // Assume argument is return code from previous command
@@ -220,9 +209,9 @@ int main(int argc, char *argv[])
             printf("returned " RED "%d" RESET "\n", ret);
         }
     }
+    print_timer("git launch");
 
     char buf[200];
-
     {
         time_t now;
         struct tm result;
@@ -238,14 +227,26 @@ int main(int argc, char *argv[])
     }
 
     printf("%s: " WHITE, geteuid() == 0 ? RED : GREEN);
-    print_timer("asic");
+    print_timer("basic stuff");
 
     print_path();
     print_timer("path");
-    print_git();
+
+    if (git_output) {
+        int stat_val = -1;
+        waitpid(git_pid, &stat_val, 0);
+        if (WIFEXITED(stat_val)) {
+            print_git_status(git_output);
+        }
+        fclose(git_output);
+    }
+
     print_timer("git total");
 
     printf(RESET " ");
+#ifdef DEBUG_GIT
+    puts("");
+#endif
 
     return 0;
 }
